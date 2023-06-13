@@ -1,32 +1,37 @@
-import {useContext, useEffect, useState} from "react";
+import { useEffect, useState } from "react";
 import Avatar from "./Avatar";
 
-export default function Chat (){
-
+export default function Chat() {
   const [ws, setWs] = useState(null);
-    const [onlinePeople, setOnlinePeople] = useState({});
-useEffect(() => {
-  const ws = new WebSocket('ws://localhost:4000');
-  setWs(ws);
-  ws.addEventListener('message', handleMessage);
-}, [handleMessage]);
+  const [onlinePeople, setOnlinePeople] = useState({});
+
+  useEffect(() => {
+    const webSocket = new WebSocket("ws://localhost:4000");
+    setWs(webSocket);
+
+    const handleMessage = (ev) => {
+      const messageData = JSON.parse(ev.data);
+      console.log({ ev, messageData });
+      if ("online" in messageData) {
+        showOnlinePeople(messageData.online);
+      }
+    };
+
+    webSocket.addEventListener("message", handleMessage);
+
+    return () => {
+      webSocket.removeEventListener("message", handleMessage);
+      webSocket.close();
+    };
+  }, []);
 
   function showOnlinePeople(peopleArray) {
-    
     const people = {};
-    peopleArray.forEach(({userId,username}) => {
+    peopleArray.forEach(({ userId, username }) => {
       people[userId] = username;
     });
     setOnlinePeople(people);
   }
-    function handleMessage(ev) {
-        const messageData = JSON.parse(ev.data);
-        console.log({ev,messageData});
-        if ('online' in messageData) {
-      showOnlinePeople(messageData.online);
-    }
-    }
-
 
   return (
     <div className="flex h-screen">
