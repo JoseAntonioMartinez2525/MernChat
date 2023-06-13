@@ -7,7 +7,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
 const ws = require('ws');
-
+const Message = require('./models/Message');
 
 dotenv.config();
 mongoose.connect(process.env.MONGO_URI)
@@ -28,93 +28,134 @@ app.use(cookieParser());
 
 app.use(cors({
   credentials: true,
-  origin: 'http://localhost:5173', 
+  origin: 'http://localhost:5173',
 }));
 
-app.get('/test', (req,res)=>{
-    res.json('test ok');
+app.get('/test', (req, res) => {
+  res.json('test ok');
 });
 
-app.get('/profile', (req,res)=>{
-const token = req.cookies?.token;
-if(token){
-    jwt.verify(token,jwtSecret, {}, (err, userData)=>{
-        if (err) throw err;
-        /* const {id, username} = userData; */
-        res.json({userData});
-});    
-}else{
+app.get('/profile', (req, res) => {
+  const token = req.cookies?.token;
+  if (token) {
+    jwt.verify(token, jwtSecret, {}, (err, userData) => {
+      if (err) throw err;
+      /* const {id, username} = userData; */
+      res.json({ userData });
+    });
+  } else {
     res.status(401).json('no token');
-}
+  }
 });
-app.post('/login', async (req,res)=>{
-  const {username, password} = req.body;
-  const foundUser = await User.findOne({username});
-    if (foundUser) {
-      const passOk = bcrypt.compareSync(password, foundUser.password);
-      
-      if(passOk){
-        jwt.sign({userId:foundUser._id,username}, jwtSecret, {}, (err, token)=>{
-          res.cookie('token', token, {sameSite:'none', secure:true}).json({
-            id: foundUser._id,
-          });
-        });
-      }
-    }
 
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  const foundUser = await User.findOne({ username });
+  if (foundUser) {
+    const passOk = bcrypt.compareSync(password, foundUser.password);
+
+    if (passOk) {
+      jwt.sign({ userId: foundUser._id, username }, jwtSecret, {}, (err, token) => {
+        res.cookie('token', token, { sameSite: 'none', secure: true }).json({
+          id: foundUser._id,
+        });
+      });
+    }
+  }
 });
-app.post('/register', async (req,res)=>{
-  
-  const {username,password} = req.body;
-  try{
+
+app.post('/register', async (req, res) => {
+
+  const { username, password } = req.body;
+  try {
     const hashedPassword = bcrypt.hashSync(password, bcryptSalt);
     const createdUser = await User.create({
-      username:username,
-      password:hashedPassword,
+      username: username,
+      password: hashedPassword,
     });
-    jwt.sign({userId:createdUser._id,username},
-    jwtSecret, {}, (err, token) => {
-    if (err) throw err;
-    res.cookie('token', token, {sameSite:'none', secure:true}).status(201).json({
-        id:createdUser._id, 
-    });
+    jwt.sign({ userId: createdUser._id, username },
+      jwtSecret, {}, (err, token) => {
+        if (err) throw err;
+        res.cookie('token', token, { sameSite: 'none', secure: true }).status(201).json({
+          id: createdUser._id,
+        });
 
-    });
+      });
 
-  }catch(err){
+  } catch (err) {
     if (err) throw err;
     res.status(500).json('error')
 
   }
-  
+
 
 });
 
 const server = app.listen(4000);
 
 //websocket
-const wss = new ws.WebSocketServer({server});
-wss.on('connection', (connection, req)=>{
+const wss = new ws.WebSocketServer({ server });
+wss.on('connection', (connection, req) => {
+  //lee username e id desde la cookie para esta conexión
   const cookies = req.headers.cookie;
-  if(cookies){
+  if (cookies) {
     const tokenCookieString = cookies.split(';').find(str => str.startsWith('token='));
-    if (tokenCookieString){
+    if (tokenCookieString) {
       const token = tokenCookieString.split('=')[1];
-       if (token){
-         jwt.verify(token, jwtSecret, {}, (err, userData) =>{
+      if (token) {
+        jwt.verify(token, jwtSecret, {}, (err, userData) => {
           if (err) throw err;
-          const {userId, username} = userData;
+          const { userId, username } = userData;
           connection.userId = userId;
           connection.username = username;
-         });
-       }
+        });
+      }
     }
   }
 
+  connection.on('message', async (message) => {
+    const messageData = JSON.parse(message.toString());
+    const { recipient, text } = messageData;
+    if (recipient && text) {
+      const messageDoc = await Message.create({
+        sender: connection.userId,
+        recipient,
+        text,
+      });
+
+      console.log('created message');
+      [...wss.clients]
+        .filter(c => c.userId === recipient)
+        .forEach(c => c.send(JSON.stringify({
+          text,
+          sender: connection.userId,
+          recipient,
+          _id: messageDoc._id,
+        })));
+    }
+  });
+
   //quien esta en linea
- [...wss.clients].forEach(client =>{
-     client.send(JSON.stringify({
-      online: [...wss.clients].map(c => ({userId:c.userId,username:c.username})),
-     }));
- });
+  [...wss.clients].forEach(client => {
+    client.send(JSON.stringify({
+      online: [...wss.clients].map(c => ({ userId: c.userId, username: c.username })),
+    }));
+  });
 });
+
+// Verificar si el entorno es Chrome y aplicar la solución de conexión estable
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.connect) {
+  const port = chrome.runtime.connect({ name: 'my-port' });
+
+  port.onDisconnect.addListener(() => {
+    // Manejar la desconexión
+  });
+
+  port.onMessage.addListener((message) => {
+    // Manejar los mensajes recibidos
+  });
+
+  chrome.runtime.onMessage.addListener((message) => {
+    // Manejar los mensajes enviados desde el contenido de la página
+  });
+}
